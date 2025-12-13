@@ -3,12 +3,12 @@ pipeline {
 
     environment {
         AWS_DEFAULT_REGION = 'ap-south-2'
-        ECR_REPO           = '493643818608.dkr.ecr.ap-south-2.amazonaws.com/my-springboot-app'
+        ECR_REPO           = '493643818608.dkr.ecr.ap-south-2.amazonaws.com/ecrcicdrepo'
         IMAGE_TAG          = "${env.BUILD_NUMBER}"
-        ECS_CLUSTER        = 'springboot-cluster'
-        ECS_SERVICE        = 'springboot-taskdef-service-me61gx90'
-        CONTAINER_NAME     = 'springboot-container'
-        TASK_FAMILY        = 'springboot-taskdef'
+        ECS_CLUSTER        = 'springbootdemocluster'
+        ECS_SERVICE        = 'springbootdemotaskdef-service-w4j6f88j'
+        CONTAINER_NAME     = 'springbootdemo'
+        TASK_FAMILY        = 'springbootdemotaskdef'
         TASK_EXEC_ROLE     = 'ecsTaskExecutionRole' // IAM Role for ECS to pull images from ECR
     }
 
@@ -22,7 +22,7 @@ pipeline {
                 checkout([$class: 'GitSCM',
                           branches: [[name: '*/main']],
                           userRemoteConfigs: [[
-                              url: 'https://github.com/prabhakaranskg-bot/AwsEc2DockerECRECSCICDRepo.git',
+                              url: 'https://github.com/prabhakaranskg-bot/AwsEc2DockerECRECSCICDFInal.git',
                               credentialsId: 'github-creds'
                           ]],
                           extensions: [[$class: 'WipeWorkspace']]
@@ -32,8 +32,10 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
+				sh """
                 script {
                     docker.build("${ECR_REPO}:${IMAGE_TAG}")
+                """
                 }
             }
         }
