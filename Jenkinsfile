@@ -10,35 +10,32 @@ pipeline {
         CONTAINER_NAME     = 'springbootdemo'
         TASK_FAMILY        = 'springbootdemotaskdef'
         TASK_EXEC_ROLE     = 'ecsTaskExecutionRole'
-        MAX_WAIT_MINUTES   = 5  // Max wait for ECS tasks to run
-        POLL_INTERVAL_SEC  = 15 // Poll interval in seconds
     }
 
     stages {
+
         stage('Clean Workspace') {
-            steps { deleteDir() }
+            steps {
+                deleteDir()
+            }
         }
 
         stage('Checkout') {
             steps {
-                checkout([$class: 'GitSCM',
-                          branches: [[name: '*/main']],
-                          userRemoteConfigs: [[
-                              url: 'https://github.com/prabhakaranskg-bot/AwsEc2DockerECRECSCICDFInal.git',
-                              credentialsId: 'github-creds'
-                          ]],
-                          extensions: [[$class: 'WipeWorkspace']]
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/prabhakaranskg-bot/AwsEc2DockerECRECSCICDFInal.git',
+                        credentialsId: 'github-creds'
+                    ]]
                 ])
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh 'chmod +x mvnw'
-                sh "./mvnw clean package -DskipTests"
-                script {
-                    docker.build("${ECR_REPO}:${IMAGE_TAG}")
-                }
+                sh "docker build -t ${ECR_REPO}:${IMAGE_TAG} ."
             }
         }
 
@@ -70,19 +67,23 @@ pipeline {
                         env.TASK_DEF_ARN = sh(
                             script: """
                                 aws ecs register-task-definition \
-                                    --family ${TASK_FAMILY} \
-                                    --requires-compatibilities FARGATE \
-                                    --network-mode awsvpc \
-                                    --cpu 256 --memory 512 \
-                                    --execution-role-arn arn:aws:iam::493643818608:role/${TASK_EXEC_ROLE} \
-                                    --container-definitions '[{
-                                        "name": "${CONTAINER_NAME}",
-                                        "image": "${ECR_REPO}:${IMAGE_TAG}",
-                                        "essential": true,
-                                        "portMappings": [{"containerPort": 8080,"hostPort": 8080,"protocol": "tcp"}]
-                                    }]' \
-                                    --query 'taskDefinition.taskDefinitionArn' \
-                                    --output text
+                                  --family ${TASK_FAMILY} \
+                                  --requires-compatibilities FARGATE \
+                                  --network-mode awsvpc \
+                                  --cpu 256 --memory 512 \
+                                  --execution-role-arn arn:aws:iam::493643818608:role/${TASK_EXEC_ROLE} \
+                                  --container-definitions '[{
+                                    "name": "${CONTAINER_NAME}",
+                                    "image": "${ECR_REPO}:${IMAGE_TAG}",
+                                    "essential": true,
+                                    "portMappings": [{
+                                      "containerPort": 8080,
+                                      "hostPort": 8080,
+                                      "protocol": "tcp"
+                                    }]
+                                  }]' \
+                                  --query 'taskDefinition.taskDefinitionArn' \
+                                  --output text
                             """,
                             returnStdout: true
                         ).trim()
@@ -97,52 +98,22 @@ pipeline {
                 withAWS(credentials: 'aws-creds', region: "${AWS_DEFAULT_REGION}") {
                     sh """
                         aws ecs update-service \
-                            --cluster ${ECS_CLUSTER} \
-                            --service ${ECS_SERVICE} \
-                            --task-definition ${TASK_DEF_ARN} \
-                            --force-new-deployment
+                          --cluster ${ECS_CLUSTER} \
+                          --service ${ECS_SERVICE} \
+                          --task-definition ${TASK_DEF_ARN} \
+                          --force-new-deployment
                     """
-                }
-            }
-        }
-
-        stage('Verify ECS Deployment') {
-            steps {
-                withAWS(credentials: 'aws-creds', region: "${AWS_DEFAULT_REGION}") {
-                    script {
-                        def maxAttempts = (MAX_WAIT_MINUTES * 60) / POLL_INTERVAL_SEC
-                        def attempt = 0
-                        def runningCount = 0
-                        while (attempt < maxAttempts) {
-                            runningCount = sh(
-                                script: """
-                                    aws ecs describe-services \
-                                        --cluster ${ECS_CLUSTER} \
-                                        --services ${ECS_SERVICE} \
-                                        --query 'services[0].runningCount' \
-                                        --output text
-                                """,
-                                returnStdout: true
-                            ).trim().toInteger()
-                            echo "ECS running tasks: ${runningCount}"
-                            if (runningCount >= 1) {
-                                echo "ECS tasks are running successfully!"
-                                break
-                            }
-                            attempt++
-                            sleep(POLL_INTERVAL_SEC)
-                        }
-                        if (runningCount < 1) {
-                            error "ECS tasks failed to start within ${MAX_WAIT_MINUTES} minutes."
-                        }
-                    }
                 }
             }
         }
     }
 
     post {
-        success { echo "Deployment Successful: ${ECR_REPO}:${IMAGE_TAG}" }
-        failure { echo "Deployment Failed!" }
+        success {
+            echo "Deployment Successful: ${ECR_REPO}:${IMAGE_TAG}"
+        }
+        failure {
+            echo "Deployment Failed!"
+        }
     }
 }
