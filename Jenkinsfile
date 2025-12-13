@@ -4,12 +4,14 @@ pipeline {
     environment {
         AWS_DEFAULT_REGION = 'ap-south-2'
         ECR_REPO           = '493643818608.dkr.ecr.ap-south-2.amazonaws.com/ecrcicdrepo'
-        IMAGE_TAG          = "${env.BUILD_NUMBER}"  // Unique tag per build
+        IMAGE_TAG          = "${env.BUILD_NUMBER}"
         ECS_CLUSTER        = 'springbootdemocluster'
         ECS_SERVICE        = 'springbootdemotaskdef-service-w4j6f88j'
         CONTAINER_NAME     = 'springbootdemo'
         TASK_FAMILY        = 'springbootdemotaskdef'
         TASK_EXEC_ROLE     = 'ecsTaskExecutionRole'
+        MAX_WAIT_MINUTES   = 5  // Max wait for ECS tasks to run
+        POLL_INTERVAL_SEC  = 15 // Poll interval in seconds
     }
 
     stages {
@@ -32,6 +34,8 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
+                sh 'chmod +x mvnw'
+                sh "./mvnw clean package -DskipTests"
                 script {
                     docker.build("${ECR_REPO}:${IMAGE_TAG}")
                 }
@@ -53,6 +57,8 @@ pipeline {
             steps {
                 sh """
                     docker push ${ECR_REPO}:${IMAGE_TAG}
+                    docker tag ${ECR_REPO}:${IMAGE_TAG} ${ECR_REPO}:latest
+                    docker push ${ECR_REPO}:latest
                 """
             }
         }
@@ -96,6 +102,40 @@ pipeline {
                             --task-definition ${TASK_DEF_ARN} \
                             --force-new-deployment
                     """
+                }
+            }
+        }
+
+        stage('Verify ECS Deployment') {
+            steps {
+                withAWS(credentials: 'aws-creds', region: "${AWS_DEFAULT_REGION}") {
+                    script {
+                        def maxAttempts = (MAX_WAIT_MINUTES * 60) / POLL_INTERVAL_SEC
+                        def attempt = 0
+                        def runningCount = 0
+                        while (attempt < maxAttempts) {
+                            runningCount = sh(
+                                script: """
+                                    aws ecs describe-services \
+                                        --cluster ${ECS_CLUSTER} \
+                                        --services ${ECS_SERVICE} \
+                                        --query 'services[0].runningCount' \
+                                        --output text
+                                """,
+                                returnStdout: true
+                            ).trim().toInteger()
+                            echo "ECS running tasks: ${runningCount}"
+                            if (runningCount >= 1) {
+                                echo "ECS tasks are running successfully!"
+                                break
+                            }
+                            attempt++
+                            sleep(POLL_INTERVAL_SEC)
+                        }
+                        if (runningCount < 1) {
+                            error "ECS tasks failed to start within ${MAX_WAIT_MINUTES} minutes."
+                        }
+                    }
                 }
             }
         }
