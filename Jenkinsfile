@@ -4,7 +4,7 @@ pipeline {
     environment {
         AWS_DEFAULT_REGION = 'ap-south-2'
         ECR_REPO           = '493643818608.dkr.ecr.ap-south-2.amazonaws.com/ecrcicdrepo'
-        IMAGE_TAG          = "${env.BUILD_NUMBER}"
+        IMAGE_TAG          = "${env.BUILD_NUMBER}"  // Unique tag per build
         ECS_CLUSTER        = 'springbootdemocluster'
         ECS_SERVICE        = 'springbootdemotaskdef-service-w4j6f88j'
         CONTAINER_NAME     = 'springbootdemo'
@@ -13,29 +13,28 @@ pipeline {
     }
 
     stages {
-
         stage('Clean Workspace') {
-            steps {
-                deleteDir()
-            }
+            steps { deleteDir() }
         }
 
         stage('Checkout') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/main']],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/prabhakaranskg-bot/AwsEc2DockerECRECSCICDFInal.git',
-                        credentialsId: 'github-creds'
-                    ]]
+                checkout([$class: 'GitSCM',
+                          branches: [[name: '*/main']],
+                          userRemoteConfigs: [[
+                              url: 'https://github.com/prabhakaranskg-bot/AwsEc2DockerECRECSCICDFInal.git',
+                              credentialsId: 'github-creds'
+                          ]],
+                          extensions: [[$class: 'WipeWorkspace']]
                 ])
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh "docker build -t ${ECR_REPO}:${IMAGE_TAG} ."
+                script {
+                    docker.build("${ECR_REPO}:${IMAGE_TAG}")
+                }
             }
         }
 
@@ -43,7 +42,7 @@ pipeline {
             steps {
                 withAWS(credentials: 'aws-creds', region: "${AWS_DEFAULT_REGION}") {
                     sh """
-                        aws ecr get-login-password --region ${AWS_DEFAULT_REGION} |
+                        aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | \
                         docker login --username AWS --password-stdin ${ECR_REPO}
                     """
                 }
@@ -54,8 +53,6 @@ pipeline {
             steps {
                 sh """
                     docker push ${ECR_REPO}:${IMAGE_TAG}
-                    docker tag ${ECR_REPO}:${IMAGE_TAG} ${ECR_REPO}:latest
-                    docker push ${ECR_REPO}:latest
                 """
             }
         }
@@ -67,23 +64,19 @@ pipeline {
                         env.TASK_DEF_ARN = sh(
                             script: """
                                 aws ecs register-task-definition \
-                                  --family ${TASK_FAMILY} \
-                                  --requires-compatibilities FARGATE \
-                                  --network-mode awsvpc \
-                                  --cpu 256 --memory 512 \
-                                  --execution-role-arn arn:aws:iam::493643818608:role/${TASK_EXEC_ROLE} \
-                                  --container-definitions '[{
-                                    "name": "${CONTAINER_NAME}",
-                                    "image": "${ECR_REPO}:${IMAGE_TAG}",
-                                    "essential": true,
-                                    "portMappings": [{
-                                      "containerPort": 8080,
-                                      "hostPort": 8080,
-                                      "protocol": "tcp"
-                                    }]
-                                  }]' \
-                                  --query 'taskDefinition.taskDefinitionArn' \
-                                  --output text
+                                    --family ${TASK_FAMILY} \
+                                    --requires-compatibilities FARGATE \
+                                    --network-mode awsvpc \
+                                    --cpu 256 --memory 512 \
+                                    --execution-role-arn arn:aws:iam::493643818608:role/${TASK_EXEC_ROLE} \
+                                    --container-definitions '[{
+                                        "name": "${CONTAINER_NAME}",
+                                        "image": "${ECR_REPO}:${IMAGE_TAG}",
+                                        "essential": true,
+                                        "portMappings": [{"containerPort": 8080,"hostPort": 8080,"protocol": "tcp"}]
+                                    }]' \
+                                    --query 'taskDefinition.taskDefinitionArn' \
+                                    --output text
                             """,
                             returnStdout: true
                         ).trim()
@@ -98,10 +91,10 @@ pipeline {
                 withAWS(credentials: 'aws-creds', region: "${AWS_DEFAULT_REGION}") {
                     sh """
                         aws ecs update-service \
-                          --cluster ${ECS_CLUSTER} \
-                          --service ${ECS_SERVICE} \
-                          --task-definition ${TASK_DEF_ARN} \
-                          --force-new-deployment
+                            --cluster ${ECS_CLUSTER} \
+                            --service ${ECS_SERVICE} \
+                            --task-definition ${TASK_DEF_ARN} \
+                            --force-new-deployment
                     """
                 }
             }
@@ -109,11 +102,7 @@ pipeline {
     }
 
     post {
-        success {
-            echo "Deployment Successful: ${ECR_REPO}:${IMAGE_TAG}"
-        }
-        failure {
-            echo "Deployment Failed!"
-        }
+        success { echo "Deployment Successful: ${ECR_REPO}:${IMAGE_TAG}" }
+        failure { echo "Deployment Failed!" }
     }
 }
